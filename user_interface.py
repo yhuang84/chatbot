@@ -179,10 +179,12 @@ with col3:
 st.markdown("---")
 
 # Sidebar - Configuration
-with st.sidebar:
+st.markdown("---")
+
+# Sidebar - Configuration
+with st.sidebar:  # 👈 你少了这一行！
     st.markdown("### ⚙️ Configuration")
     
-    # 🔑 ADD THIS SECTION HERE 👇
     st.markdown("### 🔑 API Key")
     user_api_key = st.text_input(
         "Enter your OpenAI API Key",
@@ -193,9 +195,25 @@ with st.sidebar:
     if user_api_key:
         os.environ['OPENAI_API_KEY'] = user_api_key
         st.success("✅ API Key Set")
+        
+        # 👇 添加这个测试按钮
+        if st.button("🧪 Test API Key"):
+            try:
+                import openai
+                client = openai.OpenAI(api_key=user_api_key)
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": "Hello"}],
+                    max_tokens=10
+                )
+                st.success("✅ API Key is valid!")
+            except Exception as e:
+                st.error(f"❌ API Key test failed: {str(e)}")
+        # 👆 测试按钮结束
     else:
         st.warning("⚠️ Please enter your API key to use the chatbot")
-    st.markdown("---")
+    
+    st.markdown("---")  # 👈 这个分隔线也要在 sidebar 里面
     
     # LLM Settings
     st.markdown("### 🤖 LLM Settings")
@@ -480,6 +498,7 @@ st.markdown("""
     <p style='font-size: 0.9em;'>© 2025 NC State University | Enhanced UI Version</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 
