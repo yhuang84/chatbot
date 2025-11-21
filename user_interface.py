@@ -182,14 +182,19 @@ st.markdown("---")
 with st.sidebar:
     st.markdown("### ⚙️ Configuration")
     
-    # API Key check
-    api_key = os.getenv('OPENAI_API_KEY')
-    if api_key:
-        st.success("✅ API Key Loaded")
-    else:
-        st.error("❌ No API Key Found")
-        st.info("Add OPENAI_API_KEY to your .env file or Streamlit secrets")
+    # 🔑 ADD THIS SECTION HERE 👇
+    st.markdown("### 🔑 API Key")
+    user_api_key = st.text_input(
+        "Enter your OpenAI API Key",
+        type="password",
+        help="Get your API key from https://platform.openai.com/api-keys"
+    )
     
+    if user_api_key:
+        os.environ['OPENAI_API_KEY'] = user_api_key
+        st.success("✅ API Key Set")
+    else:
+        st.warning("⚠️ Please enter your API key to use the chatbot")
     st.markdown("---")
     
     # LLM Settings
@@ -475,5 +480,6 @@ st.markdown("""
     <p style='font-size: 0.9em;'>© 2025 NC State University | Enhanced UI Version</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
