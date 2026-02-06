@@ -250,38 +250,118 @@ Return ONLY a decimal number between 0.0 and 1.0 (e.g., 0.85):"""
     def generate_answer(self, content: str, query: str, sources: List[Dict]) -> str:
         """Generate final answer using LLM"""
         
-        def extract_main_content(content: str) -> str:
-            """Extract main content - use full content without truncation"""
-            return content
+        # --- 1. Deduplicate Sources based on URL ---
+        unique_sources = []
+        seen_urls = set()
+        for source in sources:
+            url = source['url']
+            # Normalize URL (remove trailing slash for comparison)
+            norm_url = url.rstrip('/')
+            if norm_url not in seen_urls:
+                seen_urls.add(norm_url)
+                unique_sources.append(source)
         
-        sources_text = "\n".join([
-            f"=== SOURCE {i+1}: {source['title']} (Relevance: {source.get('relevance_score', 'N/A')}) ==="
-            f"\nURL: {source['url']}"
-            f"\nContent: {extract_main_content(source['content'])}\n"
-            for i, source in enumerate(sources)  # Use ALL filtered sources with full content - no truncation
-        ])
+        # Use unique sources for the rest of the function
+        sources = unique_sources
+
+        def extract_main_content(content: str, max_chars: int = 200000) -> str:
+            """
+            Extract main content - intelligently handle long content
+            - If content is within limit: keep it full
+            - If content exceeds limit: truncate smartly (keep beginning + end)
+            """
+            # Handle None or empty content
+            if content is None:
+                return ""
+            
+            if len(content) <= max_chars:
+                # Content within limit, keep full
+                return content
+            
+            # Content too long, smart truncation: keep 70% start + 30% end
+            keep_start = int(max_chars * 0.7)
+            keep_end = int(max_chars * 0.3)
+            
+            truncated = (
+                content[:keep_start] + 
+                f"\n\n... [Content truncated - original: {len(content):,} chars, showing: {max_chars:,} chars] ...\n\n" +
+                content[-keep_end:]
+            )
+            
+            return truncated
         
-        prompt = f"""You are an expert research assistant. Based on the NCSU website content provided below, answer the user's question comprehensively and accurately.
+        # --- 2. Create Source Map for LLM context ---
+        sources_text_list = []
+        source_url_map = []
+        
+        for i, source in enumerate(sources):
+            idx = i + 1
+            # Safely get content (handle None case)
+            source_content = source.get('content', '') if source.get('content') is not None else ''
+            original_length = len(source_content)
+            
+            # Apply smart truncation
+            processed_content = extract_main_content(source_content, max_chars=200000)
+            
+            if original_length > 200000:
+                self.logger.info(f"Source {idx} truncated: {original_length:,} → {len(processed_content):,} chars")
+            
+            # Add to content text
+            sources_text_list.append(
+                f"=== SOURCE {idx}: {source['title']} (Relevance: {source.get('relevance_score', 'N/A')}) ===\n"
+                f"URL: {source['url']}\n"
+                f"Content: {processed_content}\n"
+            )
+            # Add to URL map for the prompt
+            source_url_map.append(f"[Source {idx}]: {source['url']}")
 
-USER QUESTION: {query}
+        sources_text = "\n".join(sources_text_list)
+        source_map_str = "\n".join(source_url_map)
+        
+        # --- Check total size and warn if too large ---
+        total_chars = len(sources_text)
+        estimated_tokens = total_chars // 4  # Rough estimate: 1 token ≈ 4 chars
+        
+        if estimated_tokens > 800000:  # Leave room for response
+            self.logger.warning(f"⚠️ Large prompt: ~{estimated_tokens:,} tokens (may hit limits)")
+        else:
+            self.logger.info(f"✅ Prompt size: ~{estimated_tokens:,} tokens (~{total_chars:,} chars)")
+        
+        # --- 3. Enhanced Prompt with Specific Instructions ---
+        prompt = f"""You are an expert research assistant. Based on the NCSU website content provided below, answer the user's question comprehensively.
 
-NCSU WEBSITE CONTENT:
-{sources_text}
+    USER QUESTION: {query}
+
+    AVAILABLE SOURCES (Use these URLs for citations):
+    {source_map_str}
+
+    NCSU WEBSITE CONTENT:
+    {sources_text}
 
 INSTRUCTIONS:
-- Analyze all the provided content thoroughly
-- Extract and synthesize relevant information to answer the question
-- Provide a comprehensive, well-structured response
-- Use specific details and facts from the content
-- If the content contains the answer, provide it in full detail
-- If the content is incomplete, mention what information is available
-- Be accurate and factual - only use information from the provided content
-- Organize your response logically with clear paragraphs
-- Include specific details, names, dates, and facts when available
+1. **Deduplicate Information**: Synthesize information. Do not repeat the same fact multiple times just because it appears in multiple sources.
+2. **Rich Hyperlinks (CRITICAL)**: 
+   - You MUST create clickable links for specific forms, portals, or named pages mentioned in the text.
+   - Example: "Complete the [CSC Travel Authorization Request Form](https://forms.ncsu.edu/...)."
+   - If the specific URL for a form is not explicitly in the text, use the main Source URL that mentions it.
+3. **Inline Citations**:
+   - Cite the source immediately after the fact using standard Markdown: "Fact here [Source N]({{source_url}})."
+   - Use the URL from the "AVAILABLE SOURCES" list above.
+4. **Format**:
+   - Use clear headings and bullet points.
+   - **Do not** create a separate "Sources" list at the end; the inline links are sufficient.
 
-COMPREHENSIVE ANSWER:"""
+Example Output Format:
+**1. Eligibility**
+You must be an active student to apply. Check your status on the [MyPack Portal](https://mypack.ncsu.edu) before continuing [Source 1](https://ncsu.edu/policy).
+
+**2. Submission**
+Submit the [Travel Request Form](https://forms.ncsu.edu/travel) at least 2 weeks prior [Source 2](https://ncsu.edu/travel).
+
+COMPREHENSIVE ANSWER WITH HYPERLINKS:"""
         
         return self.llm_provider.generate_response(prompt)
+                            
     
     def research(self, query: str) -> Dict[str, Any]:
         """Conduct advanced research with all features"""
@@ -308,12 +388,65 @@ COMPREHENSIVE ANSWER:"""
         print(f"\n📋 STEP 1: Searching NCSU website for top-k results...")
         print("-" * 50)
         search_results = self.scraper.search(query, max_results=self.config.get('top_k', 10))
+        
+        # Handle None case (search might fail)
+        if search_results is None:
+            search_results = []
+        
+        initial_count = len(search_results)
+        print(f"📥 Initial search results: {initial_count}")
+
+        # --- SMART DEDUPLICATION: Remove duplicate URLs ---
+        from urllib.parse import urlparse, parse_qs, urlencode
+        
+        unique_results = []
+        seen_urls = set()
+        duplicate_count = 0
+        
+        for result in search_results:
+            # Parse URL
+            parsed = urlparse(str(result.url))
+            
+            # Normalize URL components:
+            # 1. Standardize scheme (http/https)
+            # 2. Lowercase domain
+            # 3. Remove trailing slash from path
+            # 4. Keep query parameters (for dynamic pages)
+            # 5. Remove fragment (anchor #)
+            scheme = 'https'  # Standardize to https
+            netloc = parsed.netloc.lower()
+            path = parsed.path.rstrip('/')
+            
+            # Keep query parameters but remove tracking params
+            query_params = parse_qs(parsed.query)
+            # Remove common tracking parameters
+            tracking_params = {'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid'}
+            filtered_params = {k: v for k, v in query_params.items() if k not in tracking_params}
+            
+            # Rebuild normalized URL
+            if filtered_params:
+                query_str = urlencode(sorted(filtered_params.items()), doseq=True)
+                norm_url = f"{scheme}://{netloc}{path}?{query_str}"
+            else:
+                norm_url = f"{scheme}://{netloc}{path}"
+            
+            # Check if we've seen this normalized URL
+            if norm_url not in seen_urls:
+                seen_urls.add(norm_url)
+                unique_results.append(result)
+            else:
+                duplicate_count += 1
+
+        search_results = unique_results  # Use deduplicated results
+        # --- END DEDUPLICATION ---
+
         results['search_results'] = [
             {'title': r.title, 'url': str(r.url), 'snippet': r.snippet}
             for r in search_results
         ]
-        print(f"✅ Found {len(search_results)} search results")
-        
+        print(f"✅ Found {len(search_results)} unique search results")
+        print(f"🔄 Removed {duplicate_count} duplicate URLs")
+
         # Print all search result URLs
         print(f"\n🔗 SEARCH RESULT URLs:")
         for i, result in enumerate(search_results, 1):
@@ -323,7 +456,7 @@ COMPREHENSIVE ANSWER:"""
                 snippet_preview = result.snippet[:100] + "..." if len(result.snippet) > 100 else result.snippet
                 print(f"      📝 {snippet_preview}")
             print()
-        
+
         if not search_results:
             print("❌ No search results found")
             return results
@@ -597,6 +730,12 @@ def create_sample_config():
 def main():
     """Main function with embedded configuration"""
     
+    # Fix Windows console encoding
+    import sys
+    if sys.platform == 'win32':
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    
     # ========================================
     # 🔑 LOAD ENVIRONMENT VARIABLES FROM .env
     # ========================================
@@ -629,15 +768,7 @@ def main():
         # 'query': 'who got funding recently on ai from usda?',
         # 'query': 'Can you tell me the Release time details for new faculty at  WCOT Wilson College of Textiles at NCSU',
         # 'query': 'What kinds of scholarships or financial aid are available for students in the College of Textiles?',
-        # 'query': 'How can I get reimbursement for my travel expenses as a student?',
-        # 'query': 'What are the requirements for the Computer Science major at NC State University?',
-        # 'query': 'What labs, facilities, or research centers does Wilson offer for undergraduate research?',
-        # 'query': 'What are career outcomes / job placements for graduates from Wilson College of Textiles?',
-        'query': 'What is the student experience like (internships, study abroad, senior design, etc.) in the College of Textiles?',
-
-
-        
-
+        'query': 'How can I get reimbursement for my travel expenses as a student?',
 
 
 
@@ -663,7 +794,7 @@ def main():
         # 🚀 Extraction Configuration
         'selenium_enabled': True,      # Enable Selenium for JavaScript pages (needed for NCSU search)
         'enhanced_extraction': True,   # Enable enhanced extraction features
-        'user_agent': 'NCSU Research Assistant Bot 1.0',  # Custom User-Agent
+        'user_agent': 'NCSU Advanced Research Assistant Bot 1.0',  # Custom User-Agent
         'delay': 1.0,                  # Delay between requests in seconds
         'max_retries': 3,              # Maximum retry attempts
         

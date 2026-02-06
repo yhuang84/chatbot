@@ -12,54 +12,18 @@ from pathlib import Path
 from datetime import datetime
 import json
 
-# Get current directory
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Add src to path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
 # 🔑 Load API key from Streamlit secrets or .env file
 try:
     os.environ['OPENAI_API_KEY'] = st.secrets["openai"]["api_key"]
-except (KeyError, FileNotFoundError, AttributeError):
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-    except:
-        pass
+except (KeyError, FileNotFoundError):
+    from dotenv import load_dotenv
+    load_dotenv()
 
-# Import the researcher with better error handling
-try:
-    from ncsu_advanced_config_base import NCSUAdvancedResearcher
-    st.success("✅ Successfully imported NCSUAdvancedResearcher")
-except ImportError as e:
-    st.error(f"""
-    ❌ **Import Error:** Cannot import NCSUAdvancedResearcher
-    
-    **Error details:** {str(e)}
-    
-    **Possible causes:**
-    1. Missing `src/` folder with required modules
-    2. Missing dependencies in requirements.txt
-    3. File structure issue
-    
-    **Required file structure:**
-    ```
-    /
-    ├── user_interface.py (this file)
-    ├── ncsu_advanced_config_base.py
-    ├── requirements.txt
-    └── src/
-        ├── scraper/
-        │   ├── __init__.py
-        │   ├── ncsu_scraper.py
-        │   ├── content_aggregator.py
-        │   └── models.py
-        └── utils/
-            ├── __init__.py
-            └── logger.py
-    ```
-    
-    **Please ensure all files are uploaded to your repository!**
-    """)
-    st.stop()
+# Import the researcher
+from ncsu_advanced_config_base import NCSUAdvancedResearcher
 
 # Page configuration
 st.set_page_config(
@@ -142,6 +106,19 @@ st.markdown("""
         border-left: 4px solid #CC0000;
     }
     
+    /* Logo container */
+    .logo-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 30px;
+        padding: 20px;
+        background: white;
+        border-radius: 15px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        margin-bottom: 30px;
+    }
+    
     /* Result container */
     .result-box {
         background: white;
@@ -150,6 +127,15 @@ st.markdown("""
         border-left: 5px solid #CC0000;
         box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         margin: 20px 0;
+    }
+    
+    /* Source card */
+    .source-card {
+        background: #f8f8f8;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 3px solid #CC0000;
+        margin: 10px 0;
     }
     
     /* Metrics */
@@ -175,14 +161,20 @@ if 'running' not in st.session_state:
 col1, col2, col3 = st.columns([1, 2, 1])
 
 with col1:
-    st.write("🐺")
+    try:
+        st.image(r"C:\Users\yhuang84\Desktop\Chatbot\NC_State_Wolfpack_logo.svg.png", width=150)
+    except:
+        st.write("🐺")
 
 with col2:
     st.markdown("<h1 style='text-align: center;'>🎯 NCSU Research Assistant</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; color: #666;'>AI-Powered Research Tool for NC State University</p>", unsafe_allow_html=True)
 
 with col3:
-    st.write("🏛️")
+    try:
+        st.image(r"C:\Users\yhuang84\Desktop\Chatbot\NC-State-University-Logo.png", width=150)
+    except:
+        st.write("🏛️")
 
 st.markdown("---")
 
@@ -190,33 +182,13 @@ st.markdown("---")
 with st.sidebar:
     st.markdown("### ⚙️ Configuration")
     
-    # API Key section
-    st.markdown("### 🔑 API Key")
-    user_api_key = st.text_input(
-        "Enter your OpenAI API Key",
-        type="password",
-        help="Get your API key from https://platform.openai.com/api-keys"
-    )
-    
-    if user_api_key:
-        os.environ['OPENAI_API_KEY'] = user_api_key
-        st.success("✅ API Key Set")
-        
-        # Test API Key button
-        if st.button("🧪 Test API Key"):
-            try:
-                import openai
-                client = openai.OpenAI(api_key=user_api_key)
-                response = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "user", "content": "Hello"}],
-                    max_tokens=10
-                )
-                st.success("✅ API Key is valid!")
-            except Exception as e:
-                st.error(f"❌ API Key test failed: {str(e)}")
+    # API Key check
+    api_key = os.getenv('OPENAI_API_KEY')
+    if api_key:
+        st.success("✅ API Key Loaded")
     else:
-        st.warning("⚠️ Please enter your API key to use the chatbot")
+        st.error("❌ No API Key Found")
+        st.info("Add OPENAI_API_KEY to your .env file or Streamlit secrets")
     
     st.markdown("---")
     
@@ -230,7 +202,7 @@ with st.sidebar:
     
     llm_model = st.text_input(
         "Model",
-        value="gpt-4o-mini" if llm_provider == "openai" else "claude-3-sonnet-20240229"
+        value="gpt-4.1-mini" if llm_provider == "openai" else "claude-3-sonnet-20240229"
     )
     
     llm_temperature = st.slider(
@@ -350,12 +322,6 @@ with col2:
 
 # Perform research
 if search_button and query:
-    
-    # Check if API key is set
-    if not os.getenv('OPENAI_API_KEY'):
-        st.error("❌ Please enter your OpenAI API key in the sidebar before starting research!")
-        st.stop()
-    
     st.session_state.running = True
     
     # Create config
@@ -377,55 +343,28 @@ if search_button and query:
         'timeout': timeout
     }
     
-    # Display debug information
-    st.info("### 🔍 Debug Information")
-    debug_info = {
-        'Query': query,
-        'LLM Provider': llm_provider,
-        'LLM Model': llm_model,
-        'Top-K Results': top_k,
-        'Max Pages': max_pages,
-        'Selenium Enabled': selenium_enabled,
-        'API Key Present': bool(os.getenv('OPENAI_API_KEY'))
-    }
-    st.json(debug_info)
-    
     # Progress tracking
     progress_bar = st.progress(0)
     status_text = st.empty()
     
     try:
-        # Step 1: Show configuration
-        st.info(f"✅ Starting research for query: '{query}'")
-        st.info(f"✅ Configuration created successfully")
-        
-        # Step 2: Initialize researcher
+        # Initialize researcher
         status_text.markdown("🔧 **Initializing researcher...**")
         progress_bar.progress(10)
-        
-        st.info("✅ Initializing NCSUAdvancedResearcher...")
         researcher = NCSUAdvancedResearcher(config)
-        st.success("✅ Researcher initialized successfully!")
         
-        # Step 3: Conduct research
+        # Conduct research
         status_text.markdown("🔍 **Searching NCSU website...**")
         progress_bar.progress(30)
-        
-        st.info("✅ Starting NCSU website search...")
         
         with st.spinner("Conducting research... This may take a few minutes."):
             results = researcher.research(query)
         
-        st.success("✅ Search completed successfully!")
-        
-        # Step 4: Complete
         status_text.markdown("✅ **Research complete!**")
         progress_bar.progress(100)
         
         # Save results
-        st.info("✅ Saving results...")
         saved_files = researcher.save_results(results)
-        st.success("✅ Results saved successfully!")
         
         # Store in session state
         st.session_state.results = results
@@ -437,48 +376,9 @@ if search_button and query:
     except Exception as e:
         st.error(f"❌ Error during research: {str(e)}")
         st.session_state.running = False
-        
-        # Display full error traceback (not collapsed)
         import traceback
-        st.error("### 📋 Full Error Traceback:")
-        error_trace = traceback.format_exc()
-        st.code(error_trace, language="python")
-        
-        # Display configuration for debugging
-        st.warning("### ⚙️ Configuration at Time of Error:")
-        st.json(config)
-        
-        # Display partial results if any
-        st.warning("### 🔍 Research Progress Check:")
-        if st.session_state.results:
-            st.write("Partial results generated:")
-            st.json(st.session_state.results)
-        else:
-            st.write("❌ No results were generated before the error occurred")
-        
-        # Common error suggestions
-        st.info("""
-        ### 💡 Common Issues and Solutions:
-        
-        **1. Selenium/ChromeDriver Issues:**
-        - Add `packages.txt` file with:
-          ```
-          chromium
-          chromium-driver
-          ```
-        
-        **2. Missing Dependencies:**
-        - Check `requirements.txt` includes all packages
-        - Verify `src/` folder structure is complete
-        
-        **3. Network/Access Issues:**
-        - Some sites may block automated access
-        - Try with `selenium_enabled=False` in settings
-        
-        **4. API Key Issues:**
-        - Verify API key is valid and has credits
-        - Check API key permissions
-        """)
+        with st.expander("Error Details"):
+            st.code(traceback.format_exc())
 
 # Display results
 if st.session_state.results:
@@ -517,15 +417,29 @@ if st.session_state.results:
     
     # Answer
     st.markdown("### 🤖 AI-Generated Answer")
-    
-    answer_container = st.container()
-    with answer_container:
-        st.markdown(f"""
-        <div class="result-box">
-            {results.get('final_answer', 'No answer generated')}
-        </div>
-        """, unsafe_allow_html=True)
-    
+
+    # Get answer text
+    answer_text = results.get('final_answer', 'No answer generated')
+
+    # Add custom CSS for link styling
+    st.markdown("""
+    <style>
+    div[data-testid="stMarkdownContainer"] a {
+        color: #CC0000 !important;
+        text-decoration: none;
+        font-weight: 500;
+        border-bottom: 1px solid #CC0000;
+    }
+    div[data-testid="stMarkdownContainer"] a:hover {
+        color: #990000 !important;
+        border-bottom: 2px solid #990000;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # Display answer (Markdown format will auto-render links)
+    st.markdown(answer_text)
+
     # Download answer
     col1, col2, col3 = st.columns([1, 1, 1])
     with col2:
@@ -546,18 +460,15 @@ if st.session_state.results:
     st.markdown("### 📚 Sources")
     
     sources = results.get('sources', [])
-    if sources:
-        for i, source in enumerate(sources, 1):
-            with st.expander(f"📄 Source {i}: {source['title']} (Relevance: {source['relevance_score']:.2f})"):
-                st.markdown(f"""
-                **URL:** [{source['url']}]({source['url']})
-                
-                **Relevance Score:** {source['relevance_score']:.3f}
-                
-                **Word Count:** {source['word_count']:,} words
-                """)
-    else:
-        st.warning("No sources found in results")
+    for i, source in enumerate(sources, 1):
+        with st.expander(f"📄 Source {i}: {source['title']} (Relevance: {source['relevance_score']:.2f})"):
+            st.markdown(f"""
+            **URL:** [{source['url']}]({source['url']})
+            
+            **Relevance Score:** {source['relevance_score']:.3f}
+            
+            **Word Count:** {source['word_count']:,} words
+            """)
     
     # Detailed data
     with st.expander("📊 View Detailed Research Data"):
@@ -575,6 +486,7 @@ st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     <p><strong>🐺 NC State University Research Assistant</strong></p>
     <p>Powered by AI | Built with ❤️ for the Wolfpack</p>
-    <p style='font-size: 0.9em;'>© 2025 NC State University</p>
+    <p style='font-size: 0.9em;'>© 2025 NC State University | Enhanced UI Version</p>
 </div>
 """, unsafe_allow_html=True)
+
