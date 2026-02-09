@@ -777,7 +777,7 @@ def main():
         'llm_provider': 'openai',  # Options: 'mock', 'openai', 'anthropic'
         'llm_model': 'gpt-4.1-mini',   # Model name (gpt-4o, claude-3-sonnet-20240229, etc.)
         'llm_temperature': 0.3,  # Temperature (0.0-1.0) - balanced for analysis and generation
-        'llm_max_tokens': 4000,  # Maximum tokens for comprehensive responses
+        'llm_max_tokens': 8000,  # Maximum tokens for comprehensive responses
         
         # 🔍 Search Configuration
         'top_k': 20,             # Top-K search results (1-50)
