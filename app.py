@@ -15,10 +15,10 @@ if st.button("Run Research") and query:
         "llm_provider": "openai",
         "llm_model": "gpt-4.1-mini",
         "llm_temperature": 0.3,
-        "llm_max_tokens": 4000,
-        "top_k": 10,
+        "llm_max_tokens": 8000,
+        "top_k": 30,
         "max_pages": 5,
-        "relevance_threshold": 0.6,
+        "relevance_threshold": 0.1,
         "selenium_enabled": True,
         "enhanced_extraction": True,
         "output_dir": "results"
